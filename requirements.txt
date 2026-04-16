@@ -1,0 +1,23 @@
+# Ghost Lanes Project Requirements
+# Optimized for Python 3.8+ and CARLA 0.9.13+
+
+# Core Scientific Libraries
+numpy>=1.19.5
+scipy>=1.7.1
+matplotlib>=3.4.3
+pandas>=1.3.3
+
+# Computer Vision & Deep Learning
+opencv-python>=4.5.3
+torch>=1.9.0
+torchvision>=0.10.0
+pillow>=8.3.2
+
+# Simulation & Utilities
+pathlib>=1.0.1
+tqdm>=4.62.2
+typing-extensions>=3.10.0
+
+# Note: The 'carla' python package must match your CARLA simulator version.
+# If using CARLA 0.9.13, install via the .egg file in your CARLA folder 
+# or via: pip install carla==0.9.13
