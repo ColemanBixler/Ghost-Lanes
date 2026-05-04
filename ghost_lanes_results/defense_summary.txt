@@ -1,0 +1,13 @@
+======================================================================
+GHOST LANES: FINAL DEFENSE PERFORMANCE REPORT
+======================================================================
+Precision: 0.0486 (Ability to reject ghosts)
+Recall:    0.8710 (Ability to keep real lanes)
+F1 Score:  0.0921
+------------------------------
+RAW COUNTS:
+  True Positives (Real lanes kept): 108
+  True Negatives (Ghosts blocked):  284
+  False Positives (Ghosts leaked):  2114
+  False Negatives (Real lanes cut): 16
+======================================================================

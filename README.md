@@ -24,23 +24,26 @@ The current version has been stabilized for ARM-based architectures running CARL
 
 ## Setup Information
 - Use [CARLA 0.9.13](https://github.com/carla-simulator/carla/releases/tag/0.9.13) or newer.
+- If using MacOS make sure to install Carla using [this tutorial](https://github.com/user-attachments/files/21182231/CARLA.Server.on.Apple.Silicon.Mac.pdf). However, it is easier to simply use a Linux or Windows machine.
 - Use Python 3.8 or newer and install missing dependencies with `pip install -r requirements.txt`
 
 ### 1. Start CARLA Simulator
 Execute the [CARLA simulator app](https://github.com/carla-simulator/carla) on your machine, and check the IP address that CARLA is connecting to. 
 - If you are not on Mac it should be localhost. 
-- Otherwise, run `ifconfig | grep -A 3 "en" | grep "inet "` to and make sure to replace `localhost` with the given IP address after inet.
+- Otherwise, run `ifconfig | grep -A 3 "en" | grep "inet "` to and make sure to replace `localhost` with the given IP address after inet in the `ghost_lanes_attack.py` file, the `bridge.sh`, and the `docker.sh` file.
 
 ### 2. Run the Attack Simulation
 Execute the primary attack suite. This will generate individual metrics files for each attack geometry.
 ```bash
 python3 ghost_lanes_attack.py
 ```
+- If on Mac, first execute `bridge.sh` and then run `docker.sh`. Once in the container, run the python script mentioned above.
+- Afterwards, replace `docker_container` with the name of your docker container in `copy_results.sh` and run it to get your results.
 *Note: This script now handles actor cleanup safely to allow back-to-back testing of Parallel, Convergent, and Divergent types.*
 
 ### 3. Generate Research Metrics
 Process the raw JSON data in `ghost_lanes_results/` to generate visualization plots and the final summary report.
-```bash˚v
+```bash
 python3 attack_metrics.py
 ```
 Outputs: `attack_analysis.png`, `summary_report.txt`

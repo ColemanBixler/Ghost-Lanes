@@ -3,13 +3,13 @@ GHOST LANES EXPERIMENT SUMMARY
 ======================================================================
 
 TYPE: CONVERGENT
-  Mean MLD: 9.498m
-  Mean ASR: 97.20%
+  Mean MLD: 6.630m
+  Mean ASR: 96.68%
 
 TYPE: DIVERGENT
-  Mean MLD: 11.746m
-  Mean ASR: 98.11%
+  Mean MLD: 4.587m
+  Mean ASR: 99.21%
 
 TYPE: PARALLEL
-  Mean MLD: 3.666m
-  Mean ASR: 98.63%
+  Mean MLD: 4.394m
+  Mean ASR: 94.74%

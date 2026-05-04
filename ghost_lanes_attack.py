@@ -145,7 +145,7 @@ class CARLAAttackSimulator:
     """
     
     def __init__(self, 
-                 host: str = '10.204.211.116',
+                 host: str = 'localhost',
                  port: int = 2000,
                  timeout: float = 60.0): # High timeout for Rosetta
         """
@@ -249,21 +249,138 @@ class CARLAAttackSimulator:
         return np.array([[wp.transform.location.x, wp.transform.location.y, wp.transform.location.z] for wp in waypoints])
     
     def inject_fake_lanes_in_image(self, image: np.ndarray, fake_lane_points: np.ndarray, attack: LaneInjectionAttack) -> np.ndarray:
-        if self.camera is None or self.vehicle is None: return image
+        if self.camera is None or self.vehicle is None:
+            return image
         modified_image = image.copy()
         camera_transform = self.camera.get_transform()
+        image_h, image_w = image.shape[:2]
         
+        # Color scheme per attack type (BGR)
+        ATTACK_COLORS = {
+            AttackType.PARALLEL:   {"lane": (255, 60, 60),  "border": (160, 20, 20)},  # blue
+            AttackType.CONVERGENT: {"lane": (60, 255, 60),  "border": (20, 160,  20)},  # green
+            AttackType.DIVERGENT:  {"lane": (60, 60, 255),  "border": (20, 20, 160)},  # red
+        }
+        colors = ATTACK_COLORS[attack.attack_type]
+
+        fov = float(self.camera.attributes.get('fov', 90.0))
+        focal = image_w / (2.0 * np.tan(np.radians(fov / 2.0)))
+
+        yaw   = np.radians(camera_transform.rotation.yaw)
+        pitch = np.radians(camera_transform.rotation.pitch)
+        roll  = np.radians(camera_transform.rotation.roll)
+
+        Rz = np.array([[np.cos(yaw),  -np.sin(yaw), 0],
+                    [np.sin(yaw),   np.cos(yaw), 0],
+                    [0,             0,           1]])
+        Ry = np.array([[ np.cos(pitch), 0, np.sin(pitch)],
+                    [0,              1, 0            ],
+                    [-np.sin(pitch), 0, np.cos(pitch)]])
+        Rx = np.array([[1, 0,           0            ],
+                    [0, np.cos(roll),-np.sin(roll) ],
+                    [0, np.sin(roll), np.cos(roll) ]])
+        R_world = Rz @ Ry @ Rx
+
+        cam_loc = np.array([
+            camera_transform.location.x,
+            camera_transform.location.y,
+            camera_transform.location.z,
+        ])
+
+        # Project all 3D points → 2D, keeping them in order
         image_points = []
-        for point_3d in fake_lane_points:
-            point_2d = self._world_to_image(point_3d, camera_transform, image.shape)
-            if point_2d: image_points.append(point_2d)
-        
-        if len(image_points) < 2: return modified_image
-        
-        image_points = np.array(image_points, dtype=np.int32)
-        self._draw_lane_marking(modified_image, image_points, width=int(attack.width * 100), opacity=attack.opacity)
-        return modified_image
-    
+        for pt in fake_lane_points:
+            p = pt - cam_loc
+            p_cam = R_world.T @ p
+            x_cam =  p_cam[1]
+            y_cam = -p_cam[2]
+            z_cam =  p_cam[0]
+
+            if z_cam <= 0.5:
+                continue
+            u = focal * x_cam / z_cam + image_w / 2.0
+            v = focal * y_cam / z_cam + image_h / 2.0
+            # Keep points slightly outside frame so dashes don't vanish at edges
+            if -50 <= u <= image_w + 50 and -50 <= v <= image_h + 50:
+                image_points.append((u, v))
+
+        if len(image_points) >= 2:
+            pts = np.array(image_points, dtype=np.float32)
+            lane_width = max(4, int(attack.width * 80))
+            self._draw_dashed_lane(modified_image, pts,
+                                width=lane_width,
+                                opacity=attack.opacity,
+                                lane_color=colors["lane"],
+                                border_color=colors["border"])
+
+        # HUD label in matching color
+        label = f"GHOST LANE: {attack.attack_type.value.upper()}"
+        cv2.rectangle(modified_image, (8, 8), (len(label) * 9 + 12, 30), (0, 0, 0), -1)
+        cv2.putText(modified_image, label, (10, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["lane"], 1, cv2.LINE_AA)
+
+        return modified_image   
+
+
+    def _draw_dashed_lane(self, image: np.ndarray, points: np.ndarray,
+                        width: int = 6, opacity: float = 0.8,
+                        lane_color: tuple = (0, 255, 255),
+                        border_color: tuple = (0, 120, 180),
+                        dash_px: int = 30, gap_px: int = 20):
+        """
+        Draw dashed lane markings by resampling the projected polyline at fixed
+        pixel intervals, then alternating dash / gap segments.
+        """
+        # 1. Resample the polyline into evenly-spaced pixels
+        #    Build a cumulative arc-length table first.
+        diffs = np.diff(points, axis=0)
+        seg_lengths = np.linalg.norm(diffs, axis=1)
+        cum_len = np.concatenate([[0.0], np.cumsum(seg_lengths)])
+        total_len = cum_len[-1]
+
+        if total_len < 1:
+            return
+
+        # Sample at every pixel along the curve
+        sample_distances = np.arange(0, total_len, 1.0)
+        sampled = np.zeros((len(sample_distances), 2), dtype=np.float32)
+        seg_idx = 0
+        for k, d in enumerate(sample_distances):
+            while seg_idx < len(seg_lengths) - 1 and cum_len[seg_idx + 1] < d:
+                seg_idx += 1
+            t = (d - cum_len[seg_idx]) / (seg_lengths[seg_idx] + 1e-6)
+            sampled[k] = points[seg_idx] + t * diffs[seg_idx]
+
+        # 2. Walk along the sampled points, alternating dash / gap
+        overlay = image.copy()
+        period = dash_px + gap_px
+        in_dash = True
+        seg_start = 0
+
+        for i in range(1, len(sampled)):
+            pos_in_period = i % period
+            currently_in_dash = pos_in_period < dash_px
+
+            if currently_in_dash != in_dash:
+                # Transition: flush the current segment
+                if in_dash and i - seg_start >= 2:
+                    p0 = tuple(sampled[seg_start].astype(int))
+                    p1 = tuple(sampled[i - 1].astype(int))
+                    cv2.line(overlay, p0, p1, border_color, width + 3)
+                    cv2.line(overlay, p0, p1, lane_color,   width)
+                seg_start = i
+                in_dash = currently_in_dash
+
+        # Flush final segment
+        if in_dash and len(sampled) - seg_start >= 2:
+            p0 = tuple(sampled[seg_start].astype(int))
+            p1 = tuple(sampled[-1].astype(int))
+            cv2.line(overlay, p0, p1, border_color, width + 3)
+            cv2.line(overlay, p0, p1, lane_color,   width)
+
+        cv2.addWeighted(overlay, opacity, image, 1 - opacity, 0, image)
+
+
     def _world_to_image(self, world_point: np.ndarray, camera_transform: carla.Transform, image_shape: Tuple[int, int, int]) -> Optional[Tuple[int, int]]:
         image_h, image_w = image_shape[:2]
         fov = 90.0
@@ -277,23 +394,6 @@ class CARLAAttackSimulator:
         
         if 0 <= x_2d < image_w and 0 <= y_2d < image_h: return (x_2d, y_2d)
         return None
-    
-    def _draw_lane_marking(self, image: np.ndarray, points: np.ndarray, width: int = 5, opacity: float = 0.8):
-        overlay = image.copy()
-        dash_length, gap_length = 20, 15
-        for i in range(len(points) - 1):
-            segment = points[i + 1] - points[i]
-            segment_length = np.linalg.norm(segment)
-            if segment_length < 1: continue
-            num_dashes = int(segment_length / (dash_length + gap_length))
-            for j in range(num_dashes):
-                start_ratio = j * (dash_length + gap_length) / segment_length
-                end_ratio = (j * (dash_length + gap_length) + dash_length) / segment_length
-                if end_ratio > 1.0: end_ratio = 1.0
-                start_point = tuple((points[i] + segment * start_ratio).astype(int))
-                end_point = tuple((points[i] + segment * end_ratio).astype(int))
-                cv2.line(overlay, start_point, end_point, (255, 255, 255), width)
-        cv2.addWeighted(overlay, opacity, image, 1 - opacity, 0, image)
     
     def run_attack_experiment(self, attack: LaneInjectionAttack, duration: float = 30.0, save_video: bool = True, video_path: str = "attack_output.avi") -> Dict:
         metrics = {'attack_type': attack.attack_type.value, 'frames': 0, 'max_lateral_deviation': 0.0, 'average_lateral_deviation': 0.0, 'lateral_deviations': []}
@@ -391,7 +491,7 @@ class CARLAAttackSimulator:
                 pass
 
 def main():
-    simulator = CARLAAttackSimulator(host='10.204.211.116', port=2000)
+    simulator = CARLAAttackSimulator(host='localhost', port=2000)
     try:
         simulator.setup_world(map_name='Town01', weather=WeatherCondition.CLEAR)
         
